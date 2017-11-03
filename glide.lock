@@ -1,5 +1,5 @@
-hash: beaa7cd84d35e37baec9623e57131364978c86209bcd4d7204d200975be50ae3
-updated: 2017-11-03T14:06:23.924806163-06:00
+hash: 72f9ca516a01297530d41ba5fe49501feee31a53442d48ba7a34db4cc2aa2e22
+updated: 2017-11-03T14:07:40.675399529-06:00
 imports:
 - name: github.com/cpuguy83/go-md2man
   version: 1d903dcb749992f3741d744c0f8376b4bd7eb3e1
@@ -28,7 +28,7 @@ imports:
   subpackages:
   - x86/x86asm
 - name: golang.org/x/sys
-  version: f3918c30c5c2cb527c0b071a27c35120a6c0719a
+  version: 4fe5d7925040acd225bf9c7cee65e82d07f06bff
   subpackages:
   - unix
   - windows
