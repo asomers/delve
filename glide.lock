@@ -1,8 +1,8 @@
 hash: beaa7cd84d35e37baec9623e57131364978c86209bcd4d7204d200975be50ae3
-updated: 2017-05-29T15:52:21.585055276+02:00
+updated: 2017-11-03T14:06:23.924806163-06:00
 imports:
 - name: github.com/cpuguy83/go-md2man
-  version: bcc0a711c5e6bbe72c7cb13d81c7109b45267fd2
+  version: 1d903dcb749992f3741d744c0f8376b4bd7eb3e1
   subpackages:
   - md2man
 - name: github.com/inconshreveable/mousetrap
@@ -10,13 +10,13 @@ imports:
 - name: github.com/mattn/go-colorable
   version: ded68f7a9561c023e790de24279db7ebf473ea80
 - name: github.com/mattn/go-isatty
-  version: fc9e8d8ef48496124e79ae0df75490096eccf6fe
+  version: 0360b2af4f38e8d38c7fce2a9f4e702702d73a39
 - name: github.com/peterh/liner
   version: 88609521dc4b6c858fd4c98b628147da928ce4ac
 - name: github.com/pkg/profile
   version: 06b906832ed0e32302a942b63b6c5f8359034d26
 - name: github.com/russross/blackfriday
-  version: 0ba0f2b6ed7c475a92e4df8641825cb7a11d1fa3
+  version: 6d1ef893fcb01b4f50cb6e57ed7df3e2e627b6b2
 - name: github.com/spf13/cobra
   version: b6cb3958937245a12d4d7728be080a6c758f4136
   subpackages:
