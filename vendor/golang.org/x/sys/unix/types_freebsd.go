@@ -65,10 +65,13 @@ struct sockaddr_any {
 // This structure is a duplicate of stat on FreeBSD 8-STABLE.
 // See /usr/include/sys/stat.h.
 struct stat8 {
-#undef st_atimespec	st_atim
-#undef st_mtimespec	st_mtim
-#undef st_ctimespec	st_ctim
-#undef st_birthtimespec	st_birthtim
+// Beginning with FreeBSD 9, the timespec fields should be referred to by the
+// POSIX 2008 names st_atim, st_mtim, etc.  But for compatibility with older Go
+// programs we must keep using the old names.
+#undef st_atimespec
+#undef st_mtimespec
+#undef st_ctimespec
+#undef st_birthtimespec
 	__dev_t   st_dev;
 	ino_t     st_ino;
 	mode_t    st_mode;
