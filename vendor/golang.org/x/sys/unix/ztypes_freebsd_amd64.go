@@ -277,6 +277,35 @@ const (
 	PTRACE_KILL    = 0x8
 )
 
+type Reg struct {
+	R15    int64
+	R14    int64
+	R13    int64
+	R12    int64
+	R11    int64
+	R10    int64
+	R9     int64
+	R8     int64
+	Rdi    int64
+	Rsi    int64
+	Rbp    int64
+	Rbx    int64
+	Rdx    int64
+	Rcx    int64
+	Rax    int64
+	Trapno uint32
+	Fs     uint16
+	Gs     uint16
+	Err    uint32
+	Es     uint16
+	Ds     uint16
+	Rip    int64
+	Cs     int64
+	Rflags int64
+	Rsp    int64
+	Ss     int64
+}
+
 type Kevent_t struct {
 	Ident  uint64
 	Filter int16

@@ -396,6 +396,10 @@ func IoctlGetTermios(fd int, req uint) (*Termios, error) {
 	return &value, err
 }
 
+func PtraceCont(pid int, signal int) (err error) {
+	return ptrace(PTRACE_CONT, pid, 0, signal)
+}
+
 /*
  * Exposed directly
  */

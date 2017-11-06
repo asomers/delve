@@ -290,6 +290,8 @@ const (
 	PTRACE_KILL    = C.PT_KILL
 )
 
+type Reg C.struct_reg
+
 // Events (kqueue, kevent)
 
 type Kevent_t C.struct_kevent
