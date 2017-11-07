@@ -396,9 +396,24 @@ func IoctlGetTermios(fd int, req uint) (*Termios, error) {
 	return &value, err
 }
 
+//sys	ptrace(request int, pid int, addr uintptr, data int) (err error)
+
 func PtraceCont(pid int, signal int) (err error) {
 	return ptrace(PTRACE_CONT, pid, 0, signal)
 }
+
+func PtraceGetRegs(pid int, regsout *Reg) (err error) {
+	return ptrace(PTRACE_GETREGS, pid, uintptr(unsafe.Pointer(regsout)), 0)
+}
+
+func PtraceSetRegs(pid int, regs *Reg) (err error) {
+	return ptrace(PTRACE_SETREGS, pid, uintptr(unsafe.Pointer(regs)), 0)
+}
+
+func PtraceSingleStep(pid int) (err error) {
+	return ptrace(PTRACE_SINGLESTEP, pid, 0, 0)
+}
+
 
 /*
  * Exposed directly
