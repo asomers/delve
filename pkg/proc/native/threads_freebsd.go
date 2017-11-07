@@ -76,7 +76,7 @@ func (t *Thread) Blocked() bool {
 	}
 	pc := regs.PC()
 	fn := t.BinInfo().PCToFunc(pc)
-	if fn != nil && (fn.Name == "runtime.usleep")) {
+	if fn != nil && (fn.Name == "runtime.usleep") {
 		return true
 	}
 	return false
