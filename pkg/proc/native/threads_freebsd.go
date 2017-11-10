@@ -1,5 +1,7 @@
 package native
 
+// #include <sys/thr.h>
+import "C"
 import (
 	"fmt"
 
@@ -17,7 +19,8 @@ type OSSpecificDetails struct {
 }
 
 func (t *Thread) halt() (err error) {
-	err = sys.Tgkill(t.dbp.pid, t.ID, sys.SIGSTOP)
+	_, err = C.thr_kill2(C.pid_t(t.dbp.pid), C.long(t.ID),
+			     C.int(sys.SIGSTOP))
 	if err != nil {
 		err = fmt.Errorf("halt err %s on thread %d", err, t.ID)
 		return
@@ -31,8 +34,8 @@ func (t *Thread) halt() (err error) {
 }
 
 func (t *Thread) stopped() bool {
-	state := status(t.ID, t.dbp.os.comm)
-	return state == StatusTraceStop || state == StatusTraceStopT
+	state := status(t.ID)
+	return state == StatusStopped
 }
 
 func (t *Thread) resume() error {
@@ -82,20 +85,6 @@ func (t *Thread) Blocked() bool {
 	return false
 }
 
-func (t *Thread) saveRegisters() (proc.Registers, error) {
-	var err error
-	t.dbp.execPtraceFunc(func() { err = sys.PtraceGetRegs(t.ID, &t.os.registers) })
-	if err != nil {
-		return nil, fmt.Errorf("could not save register contents")
-	}
-	return &Regs{&t.os.registers, nil}, nil
-}
-
-func (t *Thread) restoreRegisters() (err error) {
-	t.dbp.execPtraceFunc(func() { err = sys.PtraceSetRegs(t.ID, &t.os.registers) })
-	return
-}
-
 func (t *Thread) WriteMemory(addr uintptr, data []byte) (written int, err error) {
 	if t.dbp.exited {
 		return 0, proc.ProcessExitedError{Pid: t.dbp.pid}
@@ -103,7 +92,9 @@ func (t *Thread) WriteMemory(addr uintptr, data []byte) (written int, err error)
 	if len(data) == 0 {
 		return
 	}
-	t.dbp.execPtraceFunc(func() { written, err = sys.PtracePokeData(t.ID, addr, data) })
+	t.dbp.execPtraceFunc(func() {
+		written, err = ptraceWriteData(t.ID, addr, data)
+	})
 	return
 }
 
@@ -114,6 +105,8 @@ func (t *Thread) ReadMemory(data []byte, addr uintptr) (n int, err error) {
 	if len(data) == 0 {
 		return
 	}
-	t.dbp.execPtraceFunc(func() { _, err = sys.PtracePeekData(t.ID, addr, data) })
+	t.dbp.execPtraceFunc(func() {
+		n, err = ptraceReadData(t.ID, addr, data)
+	})
 	return
 }

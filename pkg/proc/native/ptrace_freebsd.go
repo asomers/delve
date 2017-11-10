@@ -1,15 +1,21 @@
 package native
 
-// #include "ptrace_freebsd.h"
+// #cgo LDFLAGS: -lutil
+//#include <sys/types.h>
+//#include <sys/ptrace.h>
+//
+// #include <stdlib.h>
+// #include "ptrace_freebsd_amd64.h"
+import "C"
 
 import (
 	"syscall"
 	"unsafe"
 
-	sys "golang.org/x/sys/unix"
-
 	"github.com/derekparker/delve/pkg/proc"
 )
+
+import sys "golang.org/x/sys/unix"
 
 // PtraceAttach executes the sys.PtraceAttach call.
 func PtraceAttach(pid int) error {
@@ -36,15 +42,28 @@ func PtraceSingleStep(tid int) error {
 }
 
 // Get a list of the thread ids of a process
-func PtraceGetLwpList(tid int) (tids []int32) {
+func PtraceGetLwpList(tid int) (tids []int) {
 	// 1500 is the default maximum threads per process.  TODO: get this
 	// from a sysctl.
-	var tids = make([]int32, 1500)
-	// The ptrace libc call returns the number of LWPs.  But which one of
-	// syscall.Syscall6's three return values corresponds?  I don't fucking
-	// know, and there is no documentation for syscall.Syscall6.
-	pret = ptrace(sys.PTRACE_GETLWPLIST, tid, unsafe.Pointer(&tids), 1500));
-	return tids[0:pret]
+	tids = make([]int, 1500)
+	n, _ := C.ptrace_get_lwp_list(C.int(tid),
+				      (*C.int)(unsafe.Pointer(&tids[0])),
+				      1500);
+	// XXX What is the appropriate action on error?
+	return tids[0:n]
+}
+
+// Get the new lwpid_t whose creation caused wpid's process to stop, if any.
+// Returns -1 if there is no such lwp
+func ptraceGetNewLwp(wpid int) (new_lwpid int, err error) {
+	var info C.struct_ptrace_lwpinfo
+	_, err = C.ptrace_lwp_info(C.int(wpid), &info);
+	if (err == syscall.Errno(0)) && ((info.pl_flags & sys.PL_FLAG_BORN) != 0) {
+		new_lwpid = int(info.pl_lwpid)
+	} else {
+		new_lwpid = -1
+	}
+	return new_lwpid, err
 }
 
 // PtraceGetRegset returns floating point registers of the specified thread
@@ -55,29 +74,34 @@ func PtraceGetLwpList(tid int) (tids []int32) {
 func PtraceGetRegset(tid int) (regset proc.LinuxX86Xstate, err error) {
 	_, _, err = syscall.Syscall6(syscall.SYS_PTRACE, sys.PTRACE_GETFPREGS, uintptr(tid), uintptr(0), uintptr(unsafe.Pointer(&regset.PtraceFpRegs)), 0, 0)
 	if err == syscall.Errno(0) {
-		err = nil
+		var xsave_len C.size_t
+		xsave, _ := C.ptrace_get_xsave(C.int(tid), &xsave_len)
+		defer C.free(unsafe.Pointer(xsave))
+		if xsave != nil {
+			xsave_sl := C.GoBytes(unsafe.Pointer(xsave),
+					      C.int(xsave_len))
+			err = proc.LinuxX86XstateRead(xsave_sl, false, &regset)
+		}
 	}
-
-	xsave = C.ptrace_get_xsave(tid)
-	if xsave != nil {
-		proc.LinuxX86stateRead(xsave
-	}
-	// AWS: TODO: figure out how to port this part.  I'm not entirely sure
-	// what an XSAVE area is.
-	//var xstateargs [_X86_XSTATE_MAX_SIZE]byte
-	//iov := sys.Iovec{Base: &xstateargs[0], Len: _X86_XSTATE_MAX_SIZE}
-	//_, _, err = syscall.Syscall6(syscall.SYS_PTRACE, sys.PTRACE_GETREGSET, uintptr(tid), _NT_X86_XSTATE, uintptr(unsafe.Pointer(&iov)), 0, 0)
-	//if err != syscall.Errno(0) {
-		//return
-	//} else {
-		//err = nil
-	//}
-
-	//err = proc.LinuxX86XstateRead(xstateargs[:iov.Len], false, &regset)
 	return regset, err
 }
 
-func ptrace(request, pid int, addr uintptr, data uintptr) (err error) {
-        _, _, err = sys.Syscall6(sys.SYS_PTRACE, uintptr(request), uintptr(pid), uintptr(addr), uintptr(data), 0, 0)
-        return
+func ptraceReadData(tid int, addr uintptr, data []byte) (n int, err error) {
+	_, e := C.ptrace_read_d(C.int(tid), C.uintptr_t(addr),
+				unsafe.Pointer(&data[0]), C.size_t(len(data)))
+	if err == syscall.Errno(0) {
+		return int(n), e
+	} else {
+		return 0, e
+	}
+}
+
+func ptraceWriteData(tid int, addr uintptr, data []byte) (n int, err error) {
+	_, e := C.ptrace_write_d(C.int(tid), C.uintptr_t(addr),
+				 unsafe.Pointer(&data[0]), C.size_t(len(data)))
+	if err == syscall.Errno(0) {
+		return int(n), e
+	} else {
+		return 0, e
+	}
 }

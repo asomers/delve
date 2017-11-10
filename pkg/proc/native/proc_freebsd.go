@@ -1,21 +1,19 @@
 package native
 
+// #cgo LDFLAGS: -lprocstat
+// #include <stdlib.h>
 // #include "proc_freebsd.h"
-
+import "C"
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 
 	sys "golang.org/x/sys/unix"
 
@@ -43,6 +41,7 @@ type OSProcessDetails struct {
 // Launch creates and begins debugging a new process. First entry in
 // `cmd` is the program to run, and then rest are the arguments
 // to be supplied to that process. `wd` is working directory of the program.
+// XXX Unused by Delve except in the tests
 func Launch(cmd []string, wd string) (*Process, error) {
 	var (
 		process *exec.Cmd
@@ -77,6 +76,7 @@ func Launch(cmd []string, wd string) (*Process, error) {
 }
 
 // Attach to an existing process with the given PID.
+// XXX Unused by Delve except in the tests
 func Attach(pid int) (*Process, error) {
 	dbp := New(pid)
 
@@ -116,6 +116,7 @@ func (dbp *Process) Kill() (err error) {
 	return
 }
 
+// Used by RequestManualStop
 func (dbp *Process) requestManualStop() (err error) {
 	return sys.Kill(dbp.pid, sys.SIGTRAP)
 }
@@ -146,7 +147,7 @@ func (dbp *Process) addThread(tid int, attach bool) (*Thread, error) {
 		}
 	}
 
-	dbp.execPtraceFunc(func() { err = syscall.PtraceSetOptions(tid, syscall.PTRACE_O_TRACECLONE) })
+	dbp.execPtraceFunc(func() { err = sys.PtraceLwpEvents(tid, 1)})
 	if err == syscall.ESRCH {
 		if _, _, err = dbp.waitFast(tid); err != nil {
 			return nil, fmt.Errorf("error while waiting after adding thread: %d %s", tid, err)
@@ -164,8 +165,9 @@ func (dbp *Process) addThread(tid int, attach bool) (*Thread, error) {
 	return dbp.threads[tid], nil
 }
 
+// Used by initializeDebugProcess
 func (dbp *Process) updateThreadList() error {
-	tids = sys.PtraceGetLwpList(dbp.pid)
+	tids := PtraceGetLwpList(dbp.pid)
 	for _, tid := range tids {
 		if _, err := dbp.addThread(tid, tid != dbp.pid); err != nil {
 			return err
@@ -174,15 +176,17 @@ func (dbp *Process) updateThreadList() error {
 	return nil
 }
 
+// Used by LoadInformation
 func findExecutable(path string, pid int) string {
 	if path == "" {
-		cstr = C.find_executable(C.int(pid))
+		cstr := C.find_executable(C.int(pid))
 		defer C.free(unsafe.Pointer(cstr))
 		path = C.GoString(cstr)
 	}
 	return path
 }
 
+// Used by ContinueOnce
 func (dbp *Process) trapWait(pid int) (*Thread, error) {
 	for {
 		wpid, status, err := dbp.wait(pid, 0)
@@ -208,11 +212,10 @@ func (dbp *Process) trapWait(pid int) (*Thread, error) {
 			/* TODO
 			 * Use ptrace with PT_LWPINFO to figure out if a new
 			 * thread was born
+			 * Continue if PT_LWPINFO fails or dbp.addThread fails
+			 * Attach to the new thread if PL_FLAG_BORN
 			 */
-			// A traced thread has cloned a new thread, grab the pid and
-			// add it to our list of traced threads.
-			var cloned uint
-			dbp.execPtraceFunc(func() { cloned, err = sys.PtraceGetEventMsg(wpid) })
+			cloned, err := ptraceGetNewLwp(wpid)
 			if err != nil {
 				if err == sys.ESRCH {
 					// thread died while we were adding it
@@ -271,68 +274,39 @@ func (dbp *Process) trapWait(pid int) (*Thread, error) {
 	}
 }
 
+// Used by LoadInformation
+// Needs to store:
+// * command name in dbp.os.comm
 func (dbp *Process) loadProcessInformation(wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	comm, err := ioutil.ReadFile(fmt.Sprintf("/proc/%d/comm", dbp.pid))
-	if err == nil {
-		// removes newline character
-		comm = bytes.TrimSuffix(comm, []byte("\n"))
-	}
+	comm, _ := C.find_command_name(C.int(dbp.pid))
+	defer C.free(unsafe.Pointer(comm))
+	comm_str := C.GoString(comm)
 
-	if comm == nil || len(comm) <= 0 {
-		stat, err := ioutil.ReadFile(fmt.Sprintf("/proc/%d/stat", dbp.pid))
-		if err != nil {
-			fmt.Printf("Could not read proc stat: %v\n", err)
-			os.Exit(1)
-		}
-		expr := fmt.Sprintf("%d\\s*\\((.*)\\)", dbp.pid)
-		rexp, err := regexp.Compile(expr)
-		if err != nil {
-			fmt.Printf("Regexp compile error: %v\n", err)
-			os.Exit(1)
-		}
-		match := rexp.FindSubmatch(stat)
-		if match == nil {
-			fmt.Printf("No match found using regexp '%s' in /proc/%d/stat\n", expr, dbp.pid)
-			os.Exit(1)
-		}
-		comm = match[1]
-	}
-	dbp.os.comm = strings.Replace(string(comm), "%", "%%", -1)
+	dbp.os.comm = strings.Replace(string(comm_str), "%", "%%", -1)
 }
 
-func status(pid int, comm string) rune {
-	f, err := os.Open(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return '\000'
-	}
-	defer f.Close()
-
-	var (
-		p     int
-		state rune
-	)
-
-	// The second field of /proc/pid/stat is the name of the task in parenthesis.
-	// The name of the task is the base name of the executable for this process limited to TASK_COMM_LEN characters
-	// Since both parenthesis and spaces can appear inside the name of the task and no escaping happens we need to read the name of the executable first
-	// See: include/linux/sched.c:315 and include/linux/sched.c:1510
-	fmt.Fscanf(f, "%d ("+comm+")  %c", &p, &state)
-	return state
+// Helper function used here and in threads_freebsd.go
+// Return the status symbol
+func status(pid int) rune {
+	status := rune(C.find_status(C.int(pid)))
+	return status
 }
 
 // waitFast is like wait but does not handle process-exit correctly
+// used by halt and singleStep
 func (dbp *Process) waitFast(pid int) (int, *sys.WaitStatus, error) {
 	var s sys.WaitStatus
-	wpid, err := sys.Wait4(pid, &s, sys.WALL, nil)
+	wpid, err := sys.Wait4(pid, &s, 0, nil)
 	return wpid, &s, err
 }
 
+// Only used in this file
 func (dbp *Process) wait(pid, options int) (int, *sys.WaitStatus, error) {
 	var s sys.WaitStatus
 	if (pid != dbp.pid) || (options != 0) {
-		wpid, err := sys.Wait4(pid, &s, sys.WALL|options, nil)
+		wpid, err := sys.Wait4(pid, &s, options, nil)
 		return wpid, &s, err
 	}
 	// If we call wait4/waitpid on a thread that is the leader of its group,
@@ -347,20 +321,21 @@ func (dbp *Process) wait(pid, options int) (int, *sys.WaitStatus, error) {
 	// https://sourceware.org/bugzilla/show_bug.cgi?id=10095
 	// https://sourceware.org/bugzilla/attachment.cgi?id=5685
 	for {
-		wpid, err := sys.Wait4(pid, &s, sys.WNOHANG|sys.WALL|options, nil)
+		wpid, err := sys.Wait4(pid, &s, sys.WNOHANG|options, nil)
 		if err != nil {
 			return 0, nil, err
 		}
 		if wpid != 0 {
 			return wpid, &s, err
 		}
-		if status(pid, dbp.os.comm) == StatusZombie {
+		if status(pid) == StatusZombie {
 			return pid, nil, nil
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 }
 
+// Used by ContinueOnce
 func (dbp *Process) setCurrentBreakpoints(trapthread *Thread) error {
 	for _, th := range dbp.threads {
 		if th.CurrentBreakpoint == nil {
@@ -373,11 +348,12 @@ func (dbp *Process) setCurrentBreakpoints(trapthread *Thread) error {
 	return nil
 }
 
+// Used by ContinueOnce
 func (dbp *Process) exitGuard(err error) error {
 	if err != sys.ESRCH {
 		return err
 	}
-	if status(dbp.pid, dbp.os.comm) == StatusZombie {
+	if status(dbp.pid) == StatusZombie {
 		_, err := dbp.trapWait(-1)
 		return err
 	}
@@ -385,6 +361,7 @@ func (dbp *Process) exitGuard(err error) error {
 	return err
 }
 
+// Used by ContinueOnce and Continue
 func (dbp *Process) resume() error {
 	// all threads stopped over a breakpoint are made to step over it
 	for _, thread := range dbp.threads {
@@ -404,6 +381,7 @@ func (dbp *Process) resume() error {
 	return nil
 }
 
+// Used by Attach and Detach
 func (dbp *Process) detach(kill bool) error {
 	for threadID := range dbp.threads {
 		err := PtraceDetach(threadID, 0)
@@ -419,12 +397,13 @@ func (dbp *Process) detach(kill bool) error {
 	// We have to wait a bit here, then check if the main thread is stopped and
 	// SIGCONT it if it is.
 	time.Sleep(50 * time.Millisecond)
-	if s := status(dbp.pid, dbp.os.comm); s == 'T' {
+	if s := status(dbp.pid); s == 'T' {
 		sys.Kill(dbp.pid, sys.SIGCONT)
 	}
 	return nil
 }
 
+// Usedy by Detach
 func killProcess(pid int) error {
 	return sys.Kill(pid, sys.SIGINT)
 }
