@@ -51,10 +51,16 @@ func goEnv(name string) string {
 }
 
 func TestBuild(t *testing.T) {
+	var makeprog string
+	if runtime.GOOS == "freebsd" {
+		makeprog = "gmake"
+	} else {
+		makeprog = "make"
+	}
 	const listenAddr = "localhost:40573"
 	var err error
 	makedir := filepath.Join(goEnv("GOPATH"), "src", "github.com", "derekparker", "delve")
-	for _, makeProgram := range []string{"make", "mingw32-make"} {
+	for _, makeProgram := range []string{makeprog, "mingw32-make"} {
 		var out []byte
 		cmd := exec.Command(makeProgram, "build")
 		cmd.Dir = makedir

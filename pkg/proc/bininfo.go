@@ -71,12 +71,14 @@ func (bininfo *BinaryInfo) LoadBinaryInfo(path string, wg *sync.WaitGroup) error
 	}
 
 	switch bininfo.GOOS {
+	case "darwin":
+		return bininfo.LoadBinaryInfoMacho(path, wg)
+	case "freebsd":
+		return bininfo.LoadBinaryInfoElf(path, wg)
 	case "linux":
 		return bininfo.LoadBinaryInfoElf(path, wg)
 	case "windows":
 		return bininfo.LoadBinaryInfoPE(path, wg)
-	case "darwin":
-		return bininfo.LoadBinaryInfoMacho(path, wg)
 	}
 	return errors.New("unsupported operating system")
 }
