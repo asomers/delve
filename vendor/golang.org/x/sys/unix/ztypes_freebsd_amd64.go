@@ -56,6 +56,22 @@ type Rlimit struct {
 
 type _Gid_t uint32
 
+type __Siginfo struct {
+	Signo    int32
+	Errno    int32
+	Code     int32
+	Pid      int32
+	Uid      uint32
+	Status   int32
+	Addr     *byte
+	Value    [8]byte
+	X_reason [40]byte
+}
+
+type Sigset_t struct {
+	X__bits [4]uint32
+}
+
 const (
 	S_IFMT   = 0xf000
 	S_IFIFO  = 0x1000
@@ -272,12 +288,21 @@ const (
 )
 
 const (
-	PTRACE_TRACEME    = 0x0
+	PL_FLAG_BORN      = 0x100
+	PTRACE_ATTACH     = 0xa
 	PTRACE_CONT       = 0x7
+	PTRACE_DETACH     = 0xb
+	PTRACE_GETFPREGS  = 0x23
+	PTRACE_GETFSBASE  = 0x47
+	PTRACE_GETLWPLIST = 0xf
 	PTRACE_GETREGS    = 0x21
+	PTRACE_GETXSTATE  = 0x45
 	PTRACE_KILL       = 0x8
+	PTRACE_LWPEVENTS  = 0x18
+	PTRACE_LWPINFO    = 0xd
 	PTRACE_SETREGS    = 0x22
 	PTRACE_SINGLESTEP = 0x9
+	PTRACE_TRACEME    = 0x0
 )
 
 type Reg struct {
@@ -333,6 +358,20 @@ const (
 	SizeofRtMsghdr         = 0x98
 	SizeofRtMetrics        = 0x70
 )
+
+type PtraceLwpInfo struct {
+	Lwpid        int32
+	Event        int32
+	Flags        int32
+	Sigmask      Sigset_t
+	Siglist      Sigset_t
+	Pad_cgo_0    [4]byte
+	Siginfo      __Siginfo
+	Tdname       [20]int8
+	Child_pid    int32
+	Syscall_code uint32
+	Syscall_narg uint32
+}
 
 type ifMsghdr struct {
 	Msglen    uint16

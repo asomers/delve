@@ -189,6 +189,10 @@ type Rlimit C.struct_rlimit
 
 type _Gid_t C.gid_t
 
+type __Siginfo C.struct___siginfo
+
+type Sigset_t C.sigset_t
+
 // Files
 
 const ( // Directory mode bits
@@ -285,12 +289,21 @@ const (
 // Ptrace requests
 
 const (
-	PTRACE_TRACEME = C.PT_TRACE_ME
+	PL_FLAG_BORN = C.PL_FLAG_BORN
+	PTRACE_ATTACH  = C.PT_ATTACH
 	PTRACE_CONT    = C.PT_CONTINUE
+	PTRACE_DETACH    = C.PT_DETACH
+	PTRACE_GETFPREGS = C.PT_GETFPREGS
+	PTRACE_GETFSBASE = C.PT_GETFSBASE
+	PTRACE_GETLWPLIST = C.PT_GETLWPLIST
 	PTRACE_GETREGS = C.PT_GETREGS
+	PTRACE_GETXSTATE = C.PT_GETXSTATE
 	PTRACE_KILL    = C.PT_KILL
+	PTRACE_LWPEVENTS = C.PT_LWP_EVENTS
+	PTRACE_LWPINFO = C.PT_LWPINFO
 	PTRACE_SETREGS = C.PT_SETREGS
 	PTRACE_SINGLESTEP = C.PT_STEP
+	PTRACE_TRACEME = C.PT_TRACE_ME
 )
 
 type Reg C.struct_reg
@@ -316,6 +329,8 @@ const (
 	SizeofRtMsghdr         = C.sizeof_struct_rt_msghdr
 	SizeofRtMetrics        = C.sizeof_struct_rt_metrics
 )
+
+type PtraceLwpInfo C.struct_ptrace_lwpinfo
 
 type ifMsghdr C.struct_if_msghdr
 
