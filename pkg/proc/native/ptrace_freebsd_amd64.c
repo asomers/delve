@@ -16,7 +16,7 @@ ptrace_get_lwp_list(int tid, int *tids, size_t len) {
 	int ret;
 
 	errno = 0;
-	ret = ptrace(PT_GETLWPLIST, (pid_t)tid, (caddr_t)&tids, len);
+	ret = ptrace(PT_GETLWPLIST, (pid_t)tid, (caddr_t)tids, len);
 	return (ret);
 }
 
