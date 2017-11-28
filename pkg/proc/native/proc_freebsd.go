@@ -131,11 +131,10 @@ func (dbp *Process) addThread(tid int, attach bool) (*Thread, error) {
 	var err error
 	if attach {
 		dbp.execPtraceFunc(func() { err = sys.PtraceAttach(tid) })
-		if err != nil && err != sys.EPERM {
-			// Do not return err if err == EPERM,
+		if err != nil && err != sys.EBUSY {
+			// Do not return err if err == EBUSY,
 			// we may already be tracing this thread due to
-			// PTRACE_O_TRACECLONE. We will surely blow up later
-			// if we truly don't have permissions.
+			// PTRACE_LWP.
 			return nil, fmt.Errorf("could not attach to new thread %d %s", tid, err)
 		}
 		pid, status, err := dbp.waitFast(tid)
