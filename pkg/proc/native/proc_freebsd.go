@@ -103,12 +103,12 @@ func (dbp *Process) Kill() (err error) {
 	if dbp.exited {
 		return nil
 	}
-	if !dbp.threads[dbp.pid].Stopped() {
-		return errors.New("process must be stopped in order to kill it")
-	}
 	if err = sys.Kill(-dbp.pid, sys.SIGKILL); err != nil {
 		return errors.New("could not deliver signal " + err.Error())
 	}
+	// If the process is stopped, we must continue it so it can receive the
+	// signal
+	PtraceCont(dbp.pid, 0)
 	if _, _, err = dbp.wait(dbp.pid, 0); err != nil {
 		return
 	}
@@ -129,27 +129,11 @@ func (dbp *Process) addThread(tid int, attach bool) (*Thread, error) {
 	}
 
 	var err error
-	if attach {
-		dbp.execPtraceFunc(func() { err = sys.PtraceAttach(tid) })
-		if err != nil && err != sys.EBUSY {
-			// Do not return err if err == EBUSY,
-			// we may already be tracing this thread due to
-			// PTRACE_LWP.
-			return nil, fmt.Errorf("could not attach to new thread %d %s", tid, err)
-		}
-		pid, status, err := dbp.waitFast(tid)
-		if err != nil {
-			return nil, err
-		}
-		if status.Exited() {
-			return nil, fmt.Errorf("thread already exited %d", pid)
-		}
-	}
-
-	dbp.execPtraceFunc(func() { err = sys.PtraceLwpEvents(tid, 1)})
+	dbp.execPtraceFunc(func() { err = sys.PtraceLwpEvents(dbp.pid, 1)})
 	if err == syscall.ESRCH {
-		if _, _, err = dbp.waitFast(tid); err != nil {
-			return nil, fmt.Errorf("error while waiting after adding thread: %d %s", tid, err)
+		// XXX why do we wait here?
+		if _, _, err = dbp.waitFast(dbp.pid); err != nil {
+			return nil, fmt.Errorf("error while waiting after adding process: %d %s", dbp.pid, err)
 		}
 	}
 
@@ -192,57 +176,56 @@ func (dbp *Process) trapWait(pid int) (*Thread, error) {
 		if err != nil {
 			return nil, fmt.Errorf("wait err %s %d", err, pid)
 		}
-		if wpid == 0 {
-			continue
+		tid, pl_flags, err := ptraceGetLwpInfo(wpid)
+		if err != nil {
+			return nil, fmt.Errorf("ptraceGetLwpInfo err %s %d",
+				err, pid)
 		}
-		th, ok := dbp.threads[wpid]
+		th, ok := dbp.threads[tid]
 		if ok {
 			th.Status = (*WaitStatus)(status)
 		}
 		if status.Exited() {
-			if wpid == dbp.pid {
-				dbp.postExit()
-				return nil, proc.ProcessExitedError{Pid: wpid, Status: status.ExitStatus()}
-			}
+			dbp.postExit()
+			return nil, proc.ProcessExitedError{Pid: wpid, Status: status.ExitStatus()}
 			delete(dbp.threads, wpid)
 			continue
 		}
-		if status.StopSignal() == sys.SIGTRAP {
+		if status.StopSignal() == sys.SIGTRAP && (pl_flags & sys.PL_FLAG_BORN != 0) {
 			/* TODO
 			 * Use ptrace with PT_LWPINFO to figure out if a new
 			 * thread was born
 			 * Continue if PT_LWPINFO fails or dbp.addThread fails
 			 * Attach to the new thread if PL_FLAG_BORN
 			 */
-			cloned, err := ptraceGetNewLwp(wpid)
 			if err != nil {
 				if err == sys.ESRCH {
-					// thread died while we were adding it
+					// process died while we were adding it
 					continue
 				}
 				return nil, fmt.Errorf("could not get event message: %s", err)
 			}
-			th, err = dbp.addThread(int(cloned), false)
+			th, err = dbp.addThread(int(tid), false)
 			if err != nil {
 				if err == sys.ESRCH {
-					// thread died while we were adding it
+					// process died while we were adding it
 					continue
 				}
 				return nil, err
 			}
 			if err = th.Continue(); err != nil {
 				if err == sys.ESRCH {
-					// thread died while we were adding it
+					// process died while we were continuing it
 					delete(dbp.threads, th.ID)
 					continue
 				}
-				return nil, fmt.Errorf("could not continue new thread %d %s", cloned, err)
+				return nil, fmt.Errorf("could not continue new thread %d %s", tid, err)
 			}
-			if err = dbp.threads[int(wpid)].Continue(); err != nil {
-				if err != sys.ESRCH {
-					return nil, fmt.Errorf("could not continue existing thread %d %s", wpid, err)
-				}
-			}
+			// XXX pid != tid
+			// XXX The man page is ambiguous about whether
+			// PT_CONTINUE affects a single thread or every thread
+			// in the process.  I'm guessing the latter.  If not,
+			// then we'll have to restart other threads below.
 			continue
 		}
 		if th == nil {
@@ -253,22 +236,11 @@ func (dbp *Process) trapWait(pid int) (*Thread, error) {
 		halt := dbp.halt
 		dbp.haltMu.Unlock()
 		if status.StopSignal() == sys.SIGTRAP && halt {
-			th.running = false
 			dbp.halt = false
 			return th, nil
 		}
 		if status.StopSignal() == sys.SIGTRAP {
-			th.running = false
 			return th, nil
-		}
-		if th != nil {
-			// TODO(dp) alert user about unexpected signals here.
-			if err := th.resumeWithSig(int(status.StopSignal())); err != nil {
-				if err == sys.ESRCH {
-					return nil, proc.ProcessExitedError{Pid: dbp.pid}
-				}
-				return nil, err
-			}
 		}
 	}
 }
@@ -304,34 +276,8 @@ func (dbp *Process) waitFast(pid int) (int, *sys.WaitStatus, error) {
 // Only used in this file
 func (dbp *Process) wait(pid, options int) (int, *sys.WaitStatus, error) {
 	var s sys.WaitStatus
-	if (pid != dbp.pid) || (options != 0) {
-		wpid, err := sys.Wait4(pid, &s, options, nil)
-		return wpid, &s, err
-	}
-	// If we call wait4/waitpid on a thread that is the leader of its group,
-	// with options == 0, while ptracing and the thread leader has exited leaving
-	// zombies of its own then waitpid hangs forever this is apparently intended
-	// behaviour in the linux kernel because it's just so convenient.
-	// Therefore we call wait4 in a loop with WNOHANG, sleeping a while between
-	// calls and exiting when either wait4 succeeds or we find out that the thread
-	// has become a zombie.
-	// References:
-	// https://sourceware.org/bugzilla/show_bug.cgi?id=12702
-	// https://sourceware.org/bugzilla/show_bug.cgi?id=10095
-	// https://sourceware.org/bugzilla/attachment.cgi?id=5685
-	for {
-		wpid, err := sys.Wait4(pid, &s, sys.WNOHANG|options, nil)
-		if err != nil {
-			return 0, nil, err
-		}
-		if wpid != 0 {
-			return wpid, &s, err
-		}
-		if status(pid) == StatusZombie {
-			return pid, nil, nil
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
+	wpid, err := sys.Wait4(pid, &s, options, nil)
+	return wpid, &s, err
 }
 
 // Used by ContinueOnce
@@ -382,22 +328,12 @@ func (dbp *Process) resume() error {
 
 // Used by Attach and Detach
 func (dbp *Process) detach(kill bool) error {
-	for threadID := range dbp.threads {
-		err := PtraceDetach(threadID, 0)
-		if err != nil {
-			return err
-		}
+	err := PtraceDetach(dbp.pid, 0)
+	if err != nil {
+		return err
 	}
 	if kill {
 		return nil
-	}
-	// For some reason the process will sometimes enter stopped state after a
-	// detach, this doesn't happen immediately either.
-	// We have to wait a bit here, then check if the main thread is stopped and
-	// SIGCONT it if it is.
-	time.Sleep(50 * time.Millisecond)
-	if s := status(dbp.pid); s == 'T' {
-		sys.Kill(dbp.pid, sys.SIGCONT)
 	}
 	return nil
 }

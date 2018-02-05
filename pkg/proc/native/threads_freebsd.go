@@ -25,7 +25,10 @@ func (t *Thread) halt() (err error) {
 		err = fmt.Errorf("halt err %s on thread %d", err, t.ID)
 		return
 	}
-	_, _, err = t.dbp.waitFast(t.ID)
+	// If the process is stopped, we must continue it so it can receive the
+	// signal
+	PtraceCont(t.ID, 0)
+	_, _, err = t.dbp.waitFast(t.dbp.pid)
 	if err != nil {
 		err = fmt.Errorf("wait err %s on thread %d", err, t.ID)
 		return

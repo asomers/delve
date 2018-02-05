@@ -72,7 +72,7 @@ ptrace_lwp_info(int tid, struct ptrace_lwpinfo *info) {
 }
 
 static int
-ptrace_read(int req, int tid, uintptr_t addr, void *buf, size_t len) {
+ptrace_read(int req, int tid, uintptr_t addr, void *buf, ssize_t len) {
 	/*
 	 * PT_READ_[ID] operates on ints, not bytes.  First, read a fraction of
 	 * an int if the request was unaligned
@@ -86,7 +86,7 @@ ptrace_read(int req, int tid, uintptr_t addr, void *buf, size_t len) {
 		stublen = MAX(len, sizeof(int) - addr % sizeof(int));
 		errno = 0;
 		value = ptrace(req, tid, (caddr_t)stubaddr, 0);
-		if (errno != 0)
+		if (value == -1 && errno != 0)
 			return (-1);
 		memmove(buf, &value + addr % sizeof(int), stublen);
 		addr += stublen;
@@ -102,9 +102,9 @@ ptrace_read(int req, int tid, uintptr_t addr, void *buf, size_t len) {
 
 		errno = 0;
 		value = ptrace(req, tid, (caddr_t)addr, 0);
-		if (errno != 0)
+		if (value == -1 && errno != 0)
 			return (-1);
-		memmove(buf, &value, MAX(len, sizeof(int)));
+		memmove(buf, &value, MIN(len, sizeof(int)));
 	}
 	return (0);
 }
@@ -114,7 +114,7 @@ ptrace_read(int req, int tid, uintptr_t addr, void *buf, size_t len) {
  * into buf
  */
 int
-ptrace_read_d(int tid, uintptr_t addr, void *buf, size_t len) {
+ptrace_read_d(int tid, uintptr_t addr, void *buf, ssize_t len) {
 	return (ptrace_read(PT_READ_D, tid, addr, buf, len));
 }
 
@@ -123,41 +123,68 @@ ptrace_read_d(int tid, uintptr_t addr, void *buf, size_t len) {
  * addr into buf
  */
 int
-ptrace_read_i(int tid, uintptr_t addr, void *buf, size_t len) {
+ptrace_read_i(int tid, uintptr_t addr, void *buf, ssize_t len) {
 	return (ptrace_read(PT_READ_I, tid, addr, buf, len));
 }
 
 static int
-ptrace_write(int req, int tid, uintptr_t addr, void *buf, size_t len) {
+ptrace_write(int req, int tid, uintptr_t addr, void *buf, ssize_t len) {
+	int readreq;
+
+	readreq = (req == PT_WRITE_I) ? PT_READ_I : PT_READ_D;
 	/*
 	 * PT_WRITE_[ID] operates on ints, not bytes.  First, write a fraction
 	 * of an int if the request was unaligned
 	 */
 	if (addr % sizeof(int) != 0) {
 		int value;
-		void *stubaddr;
+		void *aligned_addr;
 		size_t stublen;
 
-		stubaddr = (void*)(addr - addr % sizeof(int));
+		/* First, read the data that we'll partially overwrite */
+		aligned_addr = (void*)(addr & ~0x3);
+		errno = 0;
+		value = ptrace(readreq, tid, (caddr_t)aligned_addr, 0);
+		if (value == -1 && errno)
+			return (-1);
+
+		/* Overwrite part of it */
 		stublen = MAX(len, sizeof(int) - addr % sizeof(int));
-		memmove(&value + addr % sizeof(int), buf, stublen);
-		if (ptrace(req, tid, (caddr_t)stubaddr, value) < 0)
+		memmove((void*)&value + addr % sizeof(int), buf, stublen);
+
+		/* Now write it back */
+		if (ptrace(req, tid, (caddr_t)aligned_addr, value) < 0)
 			return (-1);
 		addr += stublen;
 		buf += stublen;
 		len -= stublen;
 	}
 
-	/* Now write the rest */
-	for (; len > 0; len -= sizeof(int),
-			buf += sizeof(int),
-			addr += sizeof(int)) {
+	/* Now write whole ints */
+	for (; len >= sizeof(int); len -= sizeof(int),
+				   buf += sizeof(int),
+				   addr += sizeof(int)) {
 		int value;
 
-		memmove(&value, buf, MAX(len, sizeof(int)));
+		memmove(&value, buf, sizeof(int));
 		if (ptrace(req, tid, (caddr_t)addr, value) < 0)
 			return (-1);
 	}
+
+	/* Now write any trailing bit on the end */
+	if (len > 0) {
+		int value;
+
+		errno = 0;
+		value = ptrace(readreq, tid, (caddr_t)addr, 0);
+		if (value == -1 && errno)
+			return (-1);
+
+		memmove(&value, (void*)addr, len);
+		if (ptrace(req, tid, (caddr_t)addr, value) < 0)
+			return (-1);
+	}
+
 	return (0);
 }
 
@@ -167,7 +194,7 @@ ptrace_write(int req, int tid, uintptr_t addr, void *buf, size_t len) {
  *
  */
 int
-ptrace_write_d(int tid, uintptr_t addr, void *buf, size_t len) {
+ptrace_write_d(int tid, uintptr_t addr, void *buf, ssize_t len) {
 	return (ptrace_write(PT_WRITE_D, tid, addr, buf, len));
 }
 
@@ -176,6 +203,6 @@ ptrace_write_d(int tid, uintptr_t addr, void *buf, size_t len) {
  * beginning at addr
  */
 int
-ptrace_write_i(int tid, uintptr_t addr, void *buf, size_t len) {
+ptrace_write_i(int tid, uintptr_t addr, void *buf, ssize_t len) {
 	return (ptrace_write(PT_WRITE_I, tid, addr, buf, len));
 }
