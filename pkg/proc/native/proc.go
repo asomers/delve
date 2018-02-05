@@ -19,7 +19,7 @@ type Process struct {
 	// Maps instruction address to Breakpoint struct.
 	breakpoints map[uint64]*proc.Breakpoint
 
-	// List of threads mapped as such: pid -> *Thread
+	// List of Threads mapped as such: tid -> *Thread
 	threads map[int]*Thread
 
 	// Active thread
